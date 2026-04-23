@@ -1,0 +1,1690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MPD · Word-by-Word SRT Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Barlow:wght@300;400;500;600;700&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<!-- Cross-origin isolation patch for static hosts (GitHub Pages etc).
+     Unlocks SharedArrayBuffer → multi-threaded WASM. On file:// or plain
+     http://localhost this is a no-op, so it's safe to keep always. -->
+<script src="coi-serviceworker.js"></script>
+<style>
+:root {
+  --paper:  #E8E2D5;
+  --paper2: #DDD7C8;
+  --paperL: #F2EDE4;
+  --ink:    #2A2520;
+  --ink2:   #3D3830;
+  --teal:   #2DB89D;
+  --tealD:  #1E8A75;
+  --tealL:  #5CCFBA;
+  --red:    #E63946;
+  --amber:  #F5C518;
+  --amberD: #C8950A;
+  --slate:  #8BA8B5;
+  --gray:   #6B6458;
+  --grayL:  #9E958A;
+  --white:  #FAF8F4;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Barlow', sans-serif;
+  font-size: 14px;
+  line-height: 1.65;
+  min-height: 100vh;
+  padding: 40px 20px 120px;
+}
+body::before {
+  content: ''; position: fixed; inset: 0;
+  pointer-events: none; z-index: 200;
+  opacity: .36; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.74' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 200px;
+}
+body::after {
+  content: ''; position: fixed; inset: 0;
+  pointer-events: none; z-index: 1; opacity: .06;
+  background-image:
+    linear-gradient(to right, var(--ink) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--ink) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+.blob {
+  position: fixed; width: 380px; height: 380px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(139,168,181,.22) 0%, transparent 65%);
+  pointer-events: none; z-index: 0; filter: blur(20px);
+}
+.blob.tl { top: -120px; left: -120px; }
+.blob.br { bottom: -120px; right: -120px; }
+.wrap { max-width: 1040px; margin: 0 auto; position: relative; z-index: 2; }
+
+.header {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 24px; margin-bottom: 32px;
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 30px; flex-wrap: wrap;
+}
+.header-left .eyebrow {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; letter-spacing: 3px;
+  color: var(--gray); text-transform: uppercase;
+  margin-bottom: 10px;
+}
+.header-left .title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 64px; font-weight: 900;
+  line-height: 0.92; letter-spacing: -1.5px;
+  color: var(--ink);
+}
+.header-left .title span { color: var(--teal); }
+.header-left .subtitle {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 18px; font-weight: 600;
+  color: var(--ink2); letter-spacing: .3px;
+  margin-top: 8px; text-transform: uppercase;
+}
+.header-right {
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px; color: var(--gray);
+  text-align: right; max-width: 280px; line-height: 1.8;
+}
+.header-right strong { color: var(--ink); font-weight: 500; }
+
+/* ═══ MODE TOGGLE ═══ */
+.mode-panel {
+  background: var(--ink); color: var(--white);
+  padding: 24px 28px; margin-bottom: 28px;
+  border-left: 4px solid var(--amber);
+}
+.mode-panel-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; letter-spacing: 3px;
+  color: var(--amber); text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.mode-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 14px; margin-top: 4px;
+}
+@media (max-width: 680px) { .mode-grid { grid-template-columns: 1fr; } }
+.mode-card {
+  background: var(--ink2);
+  border: 1.5px solid rgba(255,255,255,.12);
+  padding: 18px 18px 16px; cursor: pointer;
+  transition: all .15s ease;
+  position: relative;
+}
+.mode-card:hover { border-color: rgba(255,255,255,.3); }
+.mode-card.active {
+  border-color: var(--amber);
+  background: #3A322A;
+}
+.mode-card.active::before {
+  content: '●'; position: absolute;
+  top: 14px; right: 16px;
+  color: var(--amber); font-size: 12px;
+}
+.mc-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 19px; font-weight: 800;
+  letter-spacing: .3px; text-transform: uppercase;
+  color: var(--white); line-height: 1.15;
+}
+.mc-sub {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; letter-spacing: 1.4px;
+  color: var(--tealL); margin-top: 3px;
+  text-transform: uppercase;
+}
+.mc-desc {
+  font-family: 'Barlow', sans-serif;
+  font-size: 12.5px; color: rgba(255,255,255,.72);
+  margin-top: 10px; line-height: 1.55;
+}
+.mc-tags {
+  display: flex; gap: 6px; margin-top: 12px; flex-wrap: wrap;
+}
+.mc-tag {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px; letter-spacing: 1px;
+  background: rgba(255,255,255,.08);
+  color: rgba(255,255,255,.75);
+  padding: 3px 7px; text-transform: uppercase;
+}
+.mc-tag.good { background: rgba(45,184,157,.2); color: var(--tealL); }
+.mc-tag.warn { background: rgba(245,197,24,.15); color: var(--amber); }
+
+/* ═══ STEP PANELS ═══ */
+.step {
+  background: var(--paperL);
+  border: 1px solid rgba(42,37,32,.16);
+  border-left: 4px solid var(--teal);
+  padding: 26px 28px; margin-bottom: 22px;
+  position: relative;
+}
+.step[data-state="locked"] { opacity: 0.5; pointer-events: none; border-left-color: var(--grayL); }
+.step[data-state="done"] { border-left-color: var(--amber); }
+.step-num {
+  position: absolute; top: -14px; left: 22px;
+  background: var(--ink); color: var(--white);
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; letter-spacing: 2px;
+  padding: 4px 10px; font-weight: 500;
+}
+.step-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 28px; font-weight: 800;
+  letter-spacing: -.3px; line-height: 1.1;
+  margin-bottom: 6px; color: var(--ink);
+}
+.step-desc { color: var(--ink2); font-size: 13.5px; margin-bottom: 18px; max-width: 720px; }
+
+/* ═══ DROPZONES ═══ */
+.drop-row {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 16px; margin-top: 14px;
+}
+@media (max-width: 680px) { .drop-row { grid-template-columns: 1fr; } }
+.dropzone {
+  border: 1.5px dashed var(--grayL);
+  background: rgba(250,248,244,.5);
+  padding: 24px 20px; cursor: pointer;
+  transition: all .18s ease;
+  position: relative; min-height: 120px;
+  display: flex; flex-direction: column;
+  justify-content: center; text-align: center;
+}
+.dropzone:hover { border-color: var(--teal); background: rgba(45,184,157,.06); }
+.dropzone.dragover { border-color: var(--teal); border-style: solid; background: rgba(45,184,157,.12); }
+.dropzone.loaded { border-color: var(--amber); border-style: solid; background: rgba(245,197,24,.08); }
+.dropzone.required-missing { border-color: var(--red); }
+.dropzone input[type=file] { display: none; }
+.dz-label {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 14px; font-weight: 700;
+  letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--ink);
+}
+.dz-label .req { color: var(--red); margin-left: 4px; }
+.dz-label .opt { color: var(--gray); font-size: 10px; margin-left: 6px; letter-spacing: 1px; font-family: 'DM Mono', monospace; }
+.dz-hint {
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px; color: var(--gray); margin-top: 6px;
+}
+.dz-loaded {
+  font-family: 'DM Mono', monospace;
+  font-size: 11.5px; color: var(--ink);
+  margin-top: 8px; word-break: break-all; max-width: 100%;
+}
+.dz-loaded strong { color: var(--amberD); font-weight: 500; }
+.dz-clear {
+  position: absolute; top: 6px; right: 8px;
+  background: transparent; border: none;
+  font-size: 18px; line-height: 1;
+  color: var(--gray); cursor: pointer; padding: 4px 6px;
+}
+.dz-clear:hover { color: var(--red); }
+
+/* ═══ FIELDS ═══ */
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.field-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--gray); font-weight: 500;
+}
+.field input[type=text], .field input[type=password], .field input[type=number], .field select {
+  background: var(--white);
+  border: 1px solid rgba(42,37,32,.2);
+  padding: 10px 12px;
+  font-family: 'DM Mono', monospace;
+  font-size: 12.5px; color: var(--ink);
+  border-radius: 0;
+  transition: border-color .15s; width: 100%;
+}
+.field input:focus, .field select:focus {
+  outline: none; border-color: var(--teal);
+  box-shadow: 0 0 0 2px rgba(45,184,157,.16);
+}
+.field-hint {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; color: var(--gray); line-height: 1.6;
+}
+.config-row {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 680px) { .config-row { grid-template-columns: 1fr; } }
+
+/* ═══ BUTTONS ═══ */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 8px;
+  background: var(--ink); color: var(--white);
+  border: none; padding: 14px 22px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 14px; font-weight: 800;
+  letter-spacing: 2px; text-transform: uppercase;
+  cursor: pointer; transition: all .15s ease; position: relative;
+}
+.btn:hover:not(:disabled) { background: var(--teal); color: var(--ink); }
+.btn:disabled { background: var(--grayL); cursor: not-allowed; color: rgba(250,248,244,.6); }
+.btn.primary { background: var(--teal); color: var(--ink); padding: 16px 28px; font-size: 15px; }
+.btn.primary:hover:not(:disabled) { background: var(--tealD); color: var(--white); }
+.btn.small { padding: 8px 14px; font-size: 11.5px; letter-spacing: 1.2px; }
+
+/* ═══ STATUS / LOG ═══ */
+.status {
+  background: var(--ink); color: var(--white);
+  padding: 18px 22px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11.5px; line-height: 1.8;
+  max-height: 320px; overflow-y: auto;
+  margin-top: 20px;
+  border-left: 4px solid var(--teal);
+}
+.status .log-line { padding: 2px 0; }
+.status .log-line.err { color: #FF8A95; }
+.status .log-line.ok { color: var(--tealL); }
+.status .log-line.warn { color: var(--amber); }
+.status .log-time { color: var(--grayL); margin-right: 10px; }
+
+/* ═══ PROGRESS ═══ */
+.progress {
+  height: 4px; background: rgba(42,37,32,.1);
+  margin-top: 14px; overflow: hidden;
+  display: none; position: relative;
+}
+.progress.active { display: block; }
+.progress-bar {
+  height: 100%; background: var(--teal);
+  width: 0%; transition: width .3s ease;
+}
+.progress-indeterminate {
+  height: 100%; width: 35%;
+  background: linear-gradient(90deg, transparent, var(--teal), transparent);
+  animation: sweep 1.6s linear infinite;
+}
+@keyframes sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(380%); }
+}
+.progress-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px; color: var(--gray);
+  margin-top: 6px; letter-spacing: 1px;
+}
+
+/* ═══ LIVE STATS + TRANSCRIPT ═══ */
+.live-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+  display: none;
+}
+.live-stats.active { display: grid; }
+.live-stat {
+  background: var(--white);
+  border: 1px solid rgba(42,37,32,.15);
+  padding: 10px 12px;
+}
+.live-stat .ls-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--gray);
+}
+.live-stat .ls-value {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--ink);
+  line-height: 1.1;
+  margin-top: 2px;
+  letter-spacing: -.3px;
+}
+.live-stat .ls-value.teal { color: var(--tealD); }
+.live-stat .ls-value.amber { color: var(--amberD); }
+
+.live-transcript {
+  display: none;
+  background: var(--ink);
+  color: var(--white);
+  padding: 16px 20px;
+  margin-top: 14px;
+  font-family: 'DM Mono', monospace;
+  font-size: 12.5px;
+  line-height: 1.8;
+  min-height: 120px;
+  max-height: 220px;
+  overflow-y: auto;
+  border-left: 4px solid var(--amber);
+  word-spacing: 3px;
+}
+.live-transcript.active { display: block; }
+.live-transcript .lt-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9.5px;
+  letter-spacing: 2px;
+  color: var(--amber);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  display: block;
+}
+.live-transcript .lt-words { color: var(--white); }
+.live-transcript .lt-words .recent { color: var(--tealL); }
+.live-transcript .lt-cursor {
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  background: var(--amber);
+  margin-left: 3px;
+  animation: blink 1s steps(2) infinite;
+  vertical-align: middle;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.btn-abort {
+  background: transparent;
+  color: var(--red);
+  border: 1px solid var(--red);
+  margin-left: 12px;
+  display: none;
+}
+.btn-abort.active { display: inline-flex; }
+.btn-abort:hover:not(:disabled) { background: var(--red); color: var(--white); }
+
+/* ═══ OUTPUTS ═══ */
+.outputs { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 14px; }
+.output-card {
+  background: var(--white);
+  border: 1px solid rgba(42,37,32,.18);
+  padding: 16px 18px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.output-meta { flex: 1; min-width: 220px; }
+.output-meta .o-name {
+  font-family: 'DM Mono', monospace;
+  font-size: 12px; color: var(--ink);
+  font-weight: 500; word-break: break-all;
+}
+.output-meta .o-desc {
+  font-family: 'DM Mono', monospace;
+  font-size: 10px; color: var(--gray);
+  margin-top: 4px; letter-spacing: .5px;
+}
+.output-meta .o-stats {
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px; color: var(--amberD); margin-top: 4px;
+}
+
+/* ═══ PREVIEW ═══ */
+.preview {
+  background: var(--white);
+  border: 1px solid rgba(42,37,32,.18);
+  padding: 16px 18px; margin-top: 14px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; line-height: 1.7;
+  max-height: 320px; overflow-y: auto;
+  white-space: pre-wrap; color: var(--ink);
+}
+.preview-tabs {
+  display: flex; gap: 2px; margin-top: 14px;
+  border-bottom: 1px solid rgba(42,37,32,.15);
+}
+.preview-tab {
+  background: var(--paperL);
+  border: 1px solid rgba(42,37,32,.15);
+  border-bottom: none; padding: 8px 16px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 1.4px; text-transform: uppercase;
+  cursor: pointer; color: var(--gray);
+}
+.preview-tab.active { background: var(--white); color: var(--ink); position: relative; top: 1px; }
+
+/* ═══ STATS ═══ */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+@media (max-width: 680px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+.stat {
+  background: var(--white);
+  border: 1px solid rgba(42,37,32,.15);
+  padding: 12px 14px; text-align: left;
+}
+.stat .sv {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 26px; font-weight: 900;
+  line-height: 1; color: var(--ink); letter-spacing: -.5px;
+}
+.stat .sv.teal { color: var(--tealD); }
+.stat .sv.amber { color: var(--amberD); }
+.stat .sl {
+  font-family: 'DM Mono', monospace;
+  font-size: 9.5px; letter-spacing: 1.2px;
+  text-transform: uppercase; color: var(--gray); margin-top: 6px;
+}
+
+/* ═══ COLLAPSIBLE ═══ */
+.script-peek { margin-top: 14px; }
+.script-peek summary {
+  cursor: pointer;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; color: var(--gray);
+  padding: 8px 0; letter-spacing: 1px;
+  text-transform: uppercase; list-style: none;
+}
+.script-peek summary::before { content: '▸ '; color: var(--teal); font-size: 14px; }
+.script-peek[open] summary::before { content: '▾ '; }
+.script-peek-body {
+  background: var(--white);
+  border: 1px solid rgba(42,37,32,.15);
+  padding: 14px 16px;
+  font-family: 'DM Mono', monospace;
+  font-size: 11px; line-height: 1.75;
+  max-height: 240px; overflow-y: auto;
+  white-space: pre-wrap; color: var(--ink2);
+  margin-top: 6px;
+}
+
+/* ═══ FOOTER ═══ */
+.footer {
+  margin-top: 50px; padding-top: 24px;
+  border-top: 1px solid rgba(42,37,32,.2);
+  font-family: 'DM Mono', monospace;
+  font-size: 10.5px; color: var(--gray);
+  line-height: 1.8; letter-spacing: .3px;
+}
+.footer strong { color: var(--ink); font-weight: 500; }
+
+/* hide / show steps based on mode */
+.mode-whisper-only { display: none; }
+.mode-align-only { display: none; }
+body[data-mode="whisper"] .mode-whisper-only { display: block; }
+body[data-mode="align"] .mode-align-only { display: block; }
+</style>
+</head>
+<body data-mode="whisper">
+
+<div class="blob tl"></div>
+<div class="blob br"></div>
+
+<div class="wrap">
+
+<!-- ═══════ HEADER ═══════ -->
+<div class="header">
+  <div class="header-left">
+    <div class="eyebrow">Money Patterns Decoded · Production Tool</div>
+    <div class="title">Word-by-Word<br><span>SRT Generator</span></div>
+    <div class="subtitle">MP3 + Voiceover Script → Triple-format captions</div>
+  </div>
+  <div class="header-right">
+    <strong>v3.2 · accelerated</strong><br>
+    WebGPU + q8 quantization<br>
+    Live progress · stream · abort<br>
+    Run <code>server.py</code> for max speed.
+  </div>
+</div>
+
+<!-- ═══════ MODE SELECTION ═══════ -->
+<div class="mode-panel">
+  <div class="mode-panel-label">Step 00 · Pick a mode</div>
+  <div class="mode-grid">
+    <div class="mode-card active" data-mode="whisper" onclick="selectMode('whisper')">
+      <div class="mc-title">Whisper Transcribe</div>
+      <div class="mc-sub">In-browser ASR · word-level</div>
+      <div class="mc-desc">Runs OpenAI Whisper locally via transformers.js. First run downloads the model (~40–145 MB depending on size), then caches in IndexedDB — every subsequent run is fully offline. Script is optional and used for reconciliation.</div>
+      <div class="mc-tags">
+        <span class="mc-tag good">Accurate timing</span>
+        <span class="mc-tag good">Optional script</span>
+        <span class="mc-tag warn">First-run download</span>
+      </div>
+    </div>
+    <div class="mode-card" data-mode="align" onclick="selectMode('align')">
+      <div class="mc-title">Alignment Only</div>
+      <div class="mc-sub">Zero network · pure offline</div>
+      <div class="mc-desc">Uses the Web Audio API to detect speech energy peaks, then aligns them to a script you provide. No downloads ever, no transcription — just audio-to-text timing. Script is required; timing accuracy is ±150 ms typical.</div>
+      <div class="mc-tags">
+        <span class="mc-tag good">Offline from first open</span>
+        <span class="mc-tag good">No model download</span>
+        <span class="mc-tag warn">Script required</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ STEP 1 — INPUTS ═══════ -->
+<div class="step" id="step1">
+  <div class="step-num">01 · INPUTS</div>
+  <div class="step-title">Upload audio <span class="mode-whisper-only">and script (optional)</span><span class="mode-align-only">and script (required)</span></div>
+  <div class="step-desc mode-whisper-only">Drop the joined MP3 from ElevenLabs. Voiceover HTML is optional — when provided, transcription is reconciled against your exact script for &lt;5% errors on numbers and names.</div>
+  <div class="step-desc mode-align-only">Drop both the joined MP3 <em>and</em> the voiceover HTML. Alignment mode needs the script to assign text to detected speech segments.</div>
+
+  <div class="drop-row">
+    <label class="dropzone" id="dz-audio">
+      <button type="button" class="dz-clear" id="dz-audio-clear" style="display:none" onclick="clearInput(event,'audio')">×</button>
+      <input type="file" accept=".mp3,audio/mpeg,audio/mp3,.wav,.m4a" id="file-audio">
+      <div class="dz-label">Audio File <span class="req">*</span></div>
+      <div class="dz-hint">MP3 · drag or click · max ~500 MB</div>
+      <div class="dz-loaded" id="dz-audio-info"></div>
+    </label>
+
+    <label class="dropzone" id="dz-script">
+      <button type="button" class="dz-clear" id="dz-script-clear" style="display:none" onclick="clearInput(event,'script')">×</button>
+      <input type="file" accept=".html,.htm,.txt,text/html" id="file-script">
+      <div class="dz-label">Voiceover Script
+        <span class="req mode-align-only">*</span>
+        <span class="opt mode-whisper-only">optional</span>
+      </div>
+      <div class="dz-hint">HTML from Prompt 3.2 · or plain .txt</div>
+      <div class="dz-loaded" id="dz-script-info"></div>
+    </label>
+  </div>
+
+  <details class="script-peek" id="script-peek" style="display:none">
+    <summary>Preview cleaned reference script (tags stripped)</summary>
+    <div class="script-peek-body" id="script-peek-body"></div>
+  </details>
+</div>
+
+<!-- ═══════ STEP 2 — CONFIG ═══════ -->
+<div class="step" id="step2">
+  <div class="step-num">02 · CONFIG</div>
+
+  <!-- whisper config -->
+  <div class="mode-whisper-only">
+    <div class="step-title">Model and chunking</div>
+    <div class="step-desc">Bigger models are more accurate but slower and larger to download. For MPD scripts (English, studio-grade voice), <strong>Whisper Base English</strong> is the recommended default.</div>
+
+    <div class="config-row">
+      <div class="field">
+        <label class="field-label">Whisper model</label>
+        <select id="cfg-model">
+          <option value="Xenova/whisper-tiny.en">Tiny English · ~40 MB · fastest</option>
+          <option value="Xenova/whisper-base.en" selected>Base English · ~145 MB · recommended</option>
+          <option value="Xenova/whisper-small.en">Small English · ~480 MB · max accuracy</option>
+        </select>
+        <div class="field-hint">Cached after first download.</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Max words per phrase cue</label>
+        <input type="number" id="cfg-maxwords-w" value="8" min="1" max="20">
+        <div class="field-hint">Existing MPD SRTs: 4–10.</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Min cue duration (sec)</label>
+        <input type="number" id="cfg-mindur-w" value="1.0" min="0.3" max="5" step="0.1">
+        <div class="field-hint">Avoids flash-frame cues.</div>
+      </div>
+    </div>
+
+    <div class="config-row" style="margin-top: 4px;">
+      <div class="field">
+        <label class="field-label">Backend · Auto detects best</label>
+        <select id="cfg-backend">
+          <option value="auto" selected>Auto (WebGPU if available, else WASM)</option>
+          <option value="webgpu">Force WebGPU (requires HTTP + capable GPU)</option>
+          <option value="wasm">Force WASM (CPU only, works everywhere)</option>
+        </select>
+        <div class="field-hint" id="backend-status">Status checked at Generate time.</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Precision (lower = faster)</label>
+        <select id="cfg-dtype">
+          <option value="auto" selected>Auto (q8 on WASM, fp32 on WebGPU)</option>
+          <option value="fp32">fp32 · max accuracy · slowest</option>
+          <option value="fp16">fp16 · balanced · WebGPU only</option>
+          <option value="q8">q8 · 8-bit · ~2× faster WASM</option>
+          <option value="q4">q4 · 4-bit · ~3× faster WASM · ~2% acc drop</option>
+        </select>
+        <div class="field-hint">Quantization barely affects script-reconciled output.</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Chunk size (sec)</label>
+        <input type="number" id="cfg-chunksec" value="20" min="10" max="30" step="1">
+        <div class="field-hint">Larger = fewer chunks, more popup risk.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- align-only config -->
+  <div class="mode-align-only">
+    <div class="step-title">VAD thresholds and chunking</div>
+    <div class="step-desc">Alignment uses energy-based voice activity detection. Defaults work well for ElevenLabs-generated MPD voices (KateAsta). Tweak only if outputs look misaligned.</div>
+
+    <div class="config-row">
+      <div class="field">
+        <label class="field-label">Silence threshold (dB)</label>
+        <input type="number" id="cfg-silence" value="-40" min="-60" max="-20" step="1">
+        <div class="field-hint">Higher = more sensitive (more words).</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Max words per phrase cue</label>
+        <input type="number" id="cfg-maxwords-a" value="8" min="1" max="20">
+        <div class="field-hint">Existing MPD SRTs: 4–10.</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Min cue duration (sec)</label>
+        <input type="number" id="cfg-mindur-a" value="1.0" min="0.3" max="5" step="0.1">
+        <div class="field-hint">Avoids flash-frame cues.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ STEP 3 — GENERATE ═══════ -->
+<div class="step" id="step3">
+  <div class="step-num">03 · GENERATE</div>
+  <div class="step-title mode-whisper-only">Load model and transcribe</div>
+  <div class="step-title mode-align-only">Detect speech and align</div>
+  <div class="step-desc mode-whisper-only">First run: downloads the selected model from Hugging Face CDN and caches in IndexedDB. Subsequent runs: loads from cache, no network. Transcription runs on your CPU (and GPU if available via WebGPU).</div>
+  <div class="step-desc mode-align-only">Fully offline. No network calls, no downloads. Uses Web Audio API to analyse the MP3 waveform for voice activity, segments into words, then maps script words to detected segments by timing.</div>
+
+  <button class="btn primary" id="btn-generate" disabled onclick="runGenerate()">⚡ Generate SRTs</button>
+  <button class="btn btn-abort" id="btn-abort" onclick="abortRun()">⊘ Abort</button>
+
+  <div class="progress" id="progress"><div class="progress-bar" id="progress-bar"></div></div>
+  <div class="progress-label" id="progress-label"></div>
+
+  <div class="live-stats" id="live-stats">
+    <div class="live-stat">
+      <div class="ls-label">Progress</div>
+      <div class="ls-value teal" id="ls-progress">—</div>
+    </div>
+    <div class="live-stat">
+      <div class="ls-label">Elapsed</div>
+      <div class="ls-value" id="ls-elapsed">—</div>
+    </div>
+    <div class="live-stat">
+      <div class="ls-label">ETA Remaining</div>
+      <div class="ls-value amber" id="ls-eta">—</div>
+    </div>
+  </div>
+
+  <div class="live-transcript" id="live-transcript">
+    <span class="lt-label">Live transcription stream</span>
+    <div class="lt-words" id="lt-words"></div>
+  </div>
+
+  <div class="status" id="status" style="display:none"></div>
+</div>
+
+<!-- ═══════ STEP 4 — OUTPUTS ═══════ -->
+<div class="step" id="step4" data-state="locked">
+  <div class="step-num">04 · DELIVER</div>
+  <div class="step-title">Download artifacts</div>
+  <div class="step-desc">Three files, single pass. Rename with <code>MPD_W##_TopicShort_</code> prefix before committing per Section 04.</div>
+
+  <div class="stats" id="stats-grid" style="display:none">
+    <div class="stat"><div class="sv teal" id="stat-words">—</div><div class="sl">Words</div></div>
+    <div class="stat"><div class="sv" id="stat-phrases">—</div><div class="sl">Phrases</div></div>
+    <div class="stat"><div class="sv amber" id="stat-duration">—</div><div class="sl">Duration</div></div>
+    <div class="stat"><div class="sv" id="stat-match">—</div><div class="sl">Script Match</div></div>
+  </div>
+
+  <div class="outputs" id="outputs"></div>
+
+  <div class="preview-tabs" id="preview-tabs" style="display:none">
+    <div class="preview-tab active" data-tab="phrase">Phrase SRT</div>
+    <div class="preview-tab" data-tab="word">Word SRT</div>
+    <div class="preview-tab" data-tab="json">Words JSON</div>
+  </div>
+  <div class="preview" id="preview" style="display:none"></div>
+</div>
+
+<div class="footer">
+  <strong>Money Patterns Decoded · Internal Reference</strong><br>
+  Companion tool for Context File v1.5 · Prompt 3.2.8 · Audio → Word-Accurate SRT<br>
+  Whisper mode: transformers.js @ huggingface.co (model cached locally after first download) · Align mode: pure Web Audio API, zero network<br>
+  <span style="color:var(--grayL)">Output names use placeholder <code>W00_Topic</code> — rename to <code>MPD_W##_TopicShort_*</code> per Section 04 before staging.</span>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+/* ═══════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════ */
+const state = {
+  mode: 'whisper',
+  audioFile: null,
+  scriptFile: null,
+  scriptText: '',
+  scriptWords: [],
+  result: null,
+  outputs: null,
+  basename: 'MPD_W00_Topic',
+  transcriber: null,
+  aborted: false,
+  elapsedTimer: null,
+  startTime: 0,
+};
+window.__state = state;
+
+const $ = id => document.getElementById(id);
+
+/* ═══════════════════════════════════════════════
+   LOGGING
+═══════════════════════════════════════════════ */
+function log(msg, level) {
+  level = level || 'info';
+  const el = $('status');
+  el.style.display = 'block';
+  const t = new Date().toTimeString().slice(0, 8);
+  const cls = level === 'err' ? 'err' : level === 'ok' ? 'ok' : level === 'warn' ? 'warn' : '';
+  const line = document.createElement('div');
+  line.className = 'log-line ' + cls;
+  line.innerHTML = '<span class="log-time">' + t + '</span>' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function progress(pct, label) {
+  const p = $('progress');
+  const bar = $('progress-bar');
+  const lbl = $('progress-label');
+  p.classList.add('active');
+  if (pct === null) {
+    bar.style.width = '100%';
+    bar.innerHTML = '<div class="progress-indeterminate"></div>';
+    bar.style.background = 'transparent';
+  } else {
+    bar.innerHTML = '';
+    bar.style.background = 'var(--teal)';
+    bar.style.width = Math.min(100, Math.max(0, pct)) + '%';
+  }
+  lbl.textContent = label || '';
+}
+
+function progressDone() {
+  $('progress').classList.remove('active');
+  $('progress-label').textContent = '';
+  stopElapsedTimer();
+  $('live-stats').classList.remove('active');
+  $('live-transcript').classList.remove('active');
+  $('btn-abort').classList.remove('active');
+}
+
+function startElapsedTimer() {
+  state.startTime = performance.now();
+  if (state.elapsedTimer) clearInterval(state.elapsedTimer);
+  state.elapsedTimer = setInterval(function() {
+    const el = (performance.now() - state.startTime) / 1000;
+    $('ls-elapsed').textContent = formatDur(el);
+  }, 500);
+}
+
+function stopElapsedTimer() {
+  if (state.elapsedTimer) { clearInterval(state.elapsedTimer); state.elapsedTimer = null; }
+}
+
+function formatDur(sec) {
+  if (!sec || sec < 0) return '—';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  if (m < 1) return s + 's';
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+/* ═══════════════════════════════════════════════
+   MODE SELECTION
+═══════════════════════════════════════════════ */
+window.selectMode = function(mode) {
+  state.mode = mode;
+  document.body.setAttribute('data-mode', mode);
+  document.querySelectorAll('.mode-card').forEach(function(c) {
+    c.classList.toggle('active', c.dataset.mode === mode);
+  });
+  updateButtonState();
+};
+
+/* ═══════════════════════════════════════════════
+   FILE HANDLERS
+═══════════════════════════════════════════════ */
+function bytes(n) {
+  if (n > 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+  if (n > 1024) return (n / 1024).toFixed(0) + ' KB';
+  return n + ' B';
+}
+
+function bindDropzone(zoneId, inputId, kind) {
+  const zone = $(zoneId);
+  const input = $(inputId);
+  zone.addEventListener('click', function(e) {
+    if (e.target.tagName === 'BUTTON') return;
+    input.click();
+  });
+  zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', function() { zone.classList.remove('dragover'); });
+  zone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0], kind);
+  });
+  input.addEventListener('change', function(e) {
+    if (e.target.files.length) handleFile(e.target.files[0], kind);
+  });
+}
+
+window.clearInput = function(e, kind) {
+  e.stopPropagation();
+  e.preventDefault();
+  const zoneId = kind === 'audio' ? 'dz-audio' : 'dz-script';
+  const inputId = kind === 'audio' ? 'file-audio' : 'file-script';
+  const infoId = kind === 'audio' ? 'dz-audio-info' : 'dz-script-info';
+  const clearId = kind === 'audio' ? 'dz-audio-clear' : 'dz-script-clear';
+  $(zoneId).classList.remove('loaded');
+  $(inputId).value = '';
+  $(infoId).innerHTML = '';
+  $(clearId).style.display = 'none';
+  if (kind === 'audio') state.audioFile = null;
+  else { state.scriptFile = null; state.scriptText = ''; state.scriptWords = []; $('script-peek').style.display = 'none'; }
+  updateButtonState();
+};
+
+async function handleFile(file, kind) {
+  if (kind === 'audio') {
+    if (!/\.(mp3|wav|m4a|mpeg)$/i.test(file.name) && !file.type.startsWith('audio/')) {
+      log('Rejected: ' + file.name + ' — expected audio file', 'err');
+      return;
+    }
+    state.audioFile = file;
+    state.basename = deriveBasename(file.name);
+    $('dz-audio').classList.add('loaded');
+    $('dz-audio-info').innerHTML = '<strong>' + escapeHtml(file.name) + '</strong><br>' + bytes(file.size);
+    $('dz-audio-clear').style.display = 'block';
+    log('Audio loaded: ' + file.name + ' (' + bytes(file.size) + ')', 'ok');
+  } else {
+    const text = await file.text();
+    state.scriptFile = file;
+    state.scriptText = extractScript(text, file.name);
+    state.scriptWords = tokenizeScript(state.scriptText);
+    $('dz-script').classList.add('loaded');
+    $('dz-script-info').innerHTML = '<strong>' + escapeHtml(file.name) + '</strong><br>' + state.scriptWords.length + ' words extracted';
+    $('dz-script-clear').style.display = 'block';
+    $('script-peek').style.display = 'block';
+    $('script-peek-body').textContent = state.scriptText.slice(0, 4000) + (state.scriptText.length > 4000 ? '\n\n…[truncated in preview]' : '');
+    log('Script loaded: ' + file.name + ' → ' + state.scriptWords.length + ' clean words', 'ok');
+  }
+  updateButtonState();
+}
+
+function deriveBasename(filename) {
+  let base = filename.replace(/\.[^.]+$/, '');
+  base = base.replace(/_VoiceAudio(_v\d+)?$/i, '');
+  base = base.replace(/_v\d+$/i, '');
+  return base || 'MPD_W00_Topic';
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, function(c) { return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]; });
+}
+
+/* ═══════════════════════════════════════════════
+   SCRIPT EXTRACTION — strip ElevenLabs tags
+═══════════════════════════════════════════════ */
+function extractScript(raw, filename) {
+  const isHtml = /\.html?$/i.test(filename) || /<html|<body|<div/i.test(raw);
+  let text = raw;
+  if (isHtml) {
+    const doc = new DOMParser().parseFromString(raw, 'text/html');
+    doc.querySelectorAll('style, script, nav, button, header, .prompt-meta, .sec-label, .page-meta, .page-eyebrow').forEach(function(el) { el.remove(); });
+    let candidates = [].slice.call(doc.querySelectorAll('pre, code, .scriptbox, .script-box, [class*="script"]'));
+    candidates = candidates.filter(function(el) { return el.textContent.trim().length > 200; });
+    if (candidates.length) {
+      text = candidates.map(function(el) { return el.textContent; }).join('\n\n');
+    } else {
+      text = doc.body ? doc.body.textContent : doc.documentElement.textContent;
+    }
+  }
+  text = text.replace(/\[[^\[\]\n]{1,60}\]/g, ' ');
+  text = text.replace(/^\s*[A-Z][A-Z _]{2,}\s*:\s*.+$/gm, ' ');
+  text = text.replace(/═══+/g, ' ').replace(/─{3,}/g, ' ').replace(/-{5,}/g, ' ');
+  text = text.replace(/^\s*(Voice|Pillar|Word Count|Estimated Duration|Data Points Used)\s*:\s*.+$/gmi, ' ');
+  text = text.replace(/\s+/g, ' ').trim();
+  return text;
+}
+
+function tokenizeScriptKeepCase(text) {
+  return text.split(/\s+/).filter(function(w) { return w.length > 0; });
+}
+
+function tokenizeScript(text) {
+  return text
+    .toLowerCase()
+    .replace(/[^\w\s'-]/g, ' ')
+    .split(/\s+/)
+    .filter(function(w) { return w.length > 0; });
+}
+
+/* ═══════════════════════════════════════════════
+   BUTTON STATE
+═══════════════════════════════════════════════ */
+function updateButtonState() {
+  const btn = $('btn-generate');
+  if (!btn) return;
+  if (state.mode === 'whisper') btn.disabled = !state.audioFile;
+  else btn.disabled = !state.audioFile || !state.scriptWords.length;
+  const dzScript = $('dz-script');
+  dzScript.classList.toggle('required-missing', state.mode === 'align' && !state.scriptFile);
+}
+window.updateButtonState = updateButtonState;
+
+/* ═══════════════════════════════════════════════
+   AUDIO DECODE
+═══════════════════════════════════════════════ */
+async function decodeAudio(file) {
+  const ab = await file.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC({ sampleRate: 16000 });
+  const decoded = await ctx.decodeAudioData(ab.slice(0));
+  const mono = new Float32Array(decoded.length);
+  const channels = decoded.numberOfChannels;
+  for (let c = 0; c < channels; c++) {
+    const data = decoded.getChannelData(c);
+    for (let i = 0; i < data.length; i++) mono[i] += data[i] / channels;
+  }
+  return { pcm: mono, sampleRate: decoded.sampleRate, duration: decoded.duration };
+}
+
+/* ═══════════════════════════════════════════════
+   WHISPER ENGINE (main-thread, chunked, explicit yields)
+   — No worker: runs on main thread but chunks small
+     enough (<20 sec compute each) to stay under the
+     browser's "not responding" threshold.
+   — Between chunks: await setTimeout 0 forces a yield
+     so UI paints, abort clicks process, stats refresh.
+═══════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════
+   BACKEND CAPABILITY DETECTION
+═══════════════════════════════════════════════ */
+async function detectBackend(preferred) {
+  const caps = {
+    webgpuAvailable: false,
+    webgpuReason: '',
+    multithreadingAvailable: false,
+    crossOriginIsolated: typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated,
+    protocol: location.protocol,
+  };
+
+  // WebGPU check
+  if (typeof navigator !== 'undefined' && navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        caps.webgpuAvailable = true;
+      } else {
+        caps.webgpuReason = 'No GPU adapter available';
+      }
+    } catch (e) {
+      caps.webgpuReason = 'WebGPU error: ' + e.message;
+    }
+  } else {
+    if (caps.protocol === 'file:') {
+      caps.webgpuReason = 'WebGPU blocked by file:// protocol — use the included server script';
+    } else {
+      caps.webgpuReason = 'WebGPU not supported in this browser';
+    }
+  }
+
+  // Multi-threaded WASM check (needs SharedArrayBuffer + COOP/COEP)
+  caps.multithreadingAvailable = caps.crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined';
+
+  // Resolve choice
+  let chosen = 'wasm';
+  if (preferred === 'webgpu') {
+    if (caps.webgpuAvailable) chosen = 'webgpu';
+    else { chosen = 'wasm'; log('WebGPU forced but unavailable (' + caps.webgpuReason + ') — falling back to WASM', 'warn'); }
+  } else if (preferred === 'wasm') {
+    chosen = 'wasm';
+  } else {
+    // auto
+    chosen = caps.webgpuAvailable ? 'webgpu' : 'wasm';
+  }
+
+  caps.chosen = chosen;
+  return caps;
+}
+
+async function loadTranscriber(modelId, backend, dtype) {
+  const cacheKey = modelId + '|' + backend + '|' + dtype;
+  if (state.transcriber && state.transcriber._cacheKey === cacheKey) {
+    return state.transcriber;
+  }
+  // Drop previous model if config changed
+  state.transcriber = null;
+
+  log('Loading transformers.js runtime…');
+  progress(null, 'Loading runtime');
+  const mod = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.6.1/dist/transformers.min.js');
+  const pipeline = mod.pipeline;
+  const env = mod.env;
+  env.allowLocalModels = false;
+  env.useBrowserCache = true;
+
+  // Configure ONNX Runtime Web threading
+  try {
+    if (env.backends && env.backends.onnx && env.backends.onnx.wasm) {
+      if (typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined') {
+        // Leave numThreads at 0 = auto (ORT picks optimal based on hardwareConcurrency)
+        env.backends.onnx.wasm.numThreads = 0;
+        log('WASM multi-threading enabled (' + (navigator.hardwareConcurrency || '?') + ' threads available)', 'ok');
+      } else {
+        env.backends.onnx.wasm.numThreads = 1;
+        if (backend === 'wasm') {
+          log('WASM single-thread (multi-thread needs HTTP + COOP/COEP — see server script)', 'warn');
+        }
+      }
+      env.backends.onnx.wasm.simd = true;
+    }
+  } catch (e) {
+    log('Could not configure ONNX threading: ' + e.message, 'warn');
+  }
+
+  log('Loading model ' + modelId + ' · backend=' + backend + ' · dtype=' + dtype + '…');
+  progress(null, 'Loading model');
+
+  const pipelineOpts = {
+    dtype: dtype,
+    progress_callback: function(p) {
+      if (p.status === 'progress' && p.progress != null) {
+        progress(p.progress, (p.file || 'model') + ' · ' + p.progress.toFixed(0) + '%');
+      } else if (p.status === 'done') {
+        log('  ✓ ' + (p.file || 'file') + ' loaded', 'ok');
+      } else if (p.status === 'initiate') {
+        log('  · downloading ' + (p.file || 'file') + '…');
+      }
+    }
+  };
+  if (backend === 'webgpu') pipelineOpts.device = 'webgpu';
+
+  const transcriber = await pipeline('automatic-speech-recognition', modelId, pipelineOpts);
+  transcriber._cacheKey = cacheKey;
+  state.transcriber = transcriber;
+  return transcriber;
+}
+
+async function transcribeWithWhisper() {
+  const modelId = $('cfg-model').value;
+  const isEnglishOnly = /\.en$/i.test(modelId);
+  const preferredBackend = $('cfg-backend').value;
+  const preferredDtype = $('cfg-dtype').value;
+  const chunkSec = parseInt($('cfg-chunksec').value, 10) || 20;
+
+  log('Checking browser capabilities…');
+  const caps = await detectBackend(preferredBackend);
+  log('Protocol: ' + caps.protocol + ' · crossOriginIsolated: ' + caps.crossOriginIsolated, caps.crossOriginIsolated ? 'ok' : '');
+  log('WebGPU: ' + (caps.webgpuAvailable ? 'AVAILABLE' : 'unavailable — ' + caps.webgpuReason), caps.webgpuAvailable ? 'ok' : '');
+  log('Selected backend: ' + caps.chosen.toUpperCase(), 'ok');
+
+  // Resolve dtype
+  let dtype = preferredDtype;
+  if (dtype === 'auto') {
+    dtype = caps.chosen === 'webgpu' ? 'fp32' : 'q8';
+  }
+  if (dtype === 'fp16' && caps.chosen !== 'webgpu') {
+    log('fp16 requires WebGPU — switching to q8 for WASM', 'warn');
+    dtype = 'q8';
+  }
+
+  log('Decoding audio to 16 kHz mono…');
+  progress(null, 'Decoding audio');
+  const decoded = await decodeAudio(state.audioFile);
+  const pcm = decoded.pcm;
+  const sampleRate = decoded.sampleRate;
+  const duration = decoded.duration;
+  log('Audio: ' + duration.toFixed(1) + 's, ' + pcm.length.toLocaleString() + ' samples', 'ok');
+
+  await new Promise(function(r) { setTimeout(r, 30); });
+
+  const transcriber = await loadTranscriber(modelId, caps.chosen, dtype);
+  log('Model ready (' + caps.chosen + ', ' + dtype + ') — cached for next run', 'ok');
+
+  const OVERLAP_SEC = 1;
+  const chunkSamples = chunkSec * sampleRate;
+  const overlapSamples = OVERLAP_SEC * sampleRate;
+  const numChunks = Math.max(1, Math.ceil(pcm.length / chunkSamples));
+
+  log('Transcribing ' + numChunks + ' chunks of ' + chunkSec + 's each…');
+
+  $('live-stats').classList.add('active');
+  $('live-transcript').classList.add('active');
+  $('btn-abort').classList.add('active');
+  startElapsedTimer();
+
+  const allWords = [];
+  const chunkTimes = [];
+
+  for (let i = 0; i < numChunks; i++) {
+    if (state.aborted) { log('Aborted by user', 'warn'); break; }
+
+    const audioStart = Math.max(0, i * chunkSamples - overlapSamples);
+    const audioEnd = Math.min(pcm.length, (i + 1) * chunkSamples + overlapSamples);
+    const chunkPcm = pcm.slice(audioStart, audioEnd);
+    const offsetSec = audioStart / sampleRate;
+
+    await new Promise(function(r) { setTimeout(r, 0); });
+
+    const cStart = performance.now();
+    const opts = { return_timestamps: 'word' };
+    if (!isEnglishOnly) opts.language = 'en';
+
+    let rawOut = null;
+    try {
+      rawOut = await transcriber(chunkPcm, opts);
+    } catch (err) {
+      log('Chunk ' + (i + 1) + ' failed: ' + err.message + ' — continuing', 'warn');
+    }
+    const cTime = (performance.now() - cStart) / 1000;
+    chunkTimes.push(cTime);
+
+    const words = rawOut ? (rawOut.chunks || [])
+      .filter(function(c) { return c.timestamp && c.timestamp[0] != null; })
+      .map(function(c) {
+        return {
+          text: c.text.trim(),
+          start: c.timestamp[0] + offsetSec,
+          end: (c.timestamp[1] != null ? c.timestamp[1] : c.timestamp[0] + 0.2) + offsetSec
+        };
+      })
+      .filter(function(w) { return w.text.length > 0; }) : [];
+
+    const mainStart = i * chunkSec;
+    const mainEnd = (i + 1) * chunkSec + 0.5;
+    let added = 0;
+    for (let j = 0; j < words.length; j++) {
+      const w = words[j];
+      if (w.start >= mainStart && w.start < mainEnd) {
+        allWords.push(w);
+        added++;
+      }
+    }
+
+    const pct = ((i + 1) / numChunks) * 100;
+    progress(pct, 'Chunk ' + (i + 1) + ' of ' + numChunks);
+    $('ls-progress').textContent = (i + 1) + ' / ' + numChunks;
+    const avgChunkTime = chunkTimes.reduce(function(a, b) { return a + b; }, 0) / chunkTimes.length;
+    const etaSec = (numChunks - (i + 1)) * avgChunkTime;
+    $('ls-eta').textContent = etaSec > 0 ? formatDur(etaSec) : 'done';
+
+    const recentWords = allWords.slice(-40);
+    const newestCount = Math.min(added, recentWords.length);
+    const oldPart = recentWords.slice(0, recentWords.length - newestCount).map(function(w) { return escapeHtml(w.text); }).join(' ');
+    const newPart = recentWords.slice(recentWords.length - newestCount).map(function(w) { return escapeHtml(w.text); }).join(' ');
+    $('lt-words').innerHTML = oldPart + (oldPart ? ' ' : '') + '<span class="recent">' + newPart + '</span><span class="lt-cursor"></span>';
+    const ltBox = $('live-transcript');
+    ltBox.scrollTop = ltBox.scrollHeight;
+
+    log('  Chunk ' + (i + 1) + '/' + numChunks + ' · ' + cTime.toFixed(1) + 's · +' + added + ' words (total ' + allWords.length + ')');
+
+    await new Promise(function(r) { setTimeout(r, 0); });
+  }
+
+  if (state.aborted) throw new Error('Transcription aborted by user');
+
+  log('Whisper complete · ' + allWords.length + ' total words', 'ok');
+  return { words: allWords, duration: duration };
+}
+
+/* ═══════════════════════════════════════════════
+   ALIGNMENT-ONLY MODE (unchanged, pure offline)
+═══════════════════════════════════════════════ */
+async function runAlignmentOnly() {
+  log('Decoding audio for energy analysis…');
+  progress(null, 'Decoding audio');
+  const decoded = await decodeAudio(state.audioFile);
+  const pcm = decoded.pcm;
+  const duration = decoded.duration;
+  const sampleRate = decoded.sampleRate;
+  log('Audio: ' + duration.toFixed(1) + 's @ ' + sampleRate + ' Hz', 'ok');
+
+  const silenceDb = parseFloat($('cfg-silence').value) || -40;
+  log('Detecting voice activity (threshold ' + silenceDb + ' dB)…');
+  progress(null, 'Analysing waveform');
+
+  const frameMs = 20;
+  const frameSize = Math.round(sampleRate * frameMs / 1000);
+  const numFrames = Math.floor(pcm.length / frameSize);
+  const energies = new Float32Array(numFrames);
+  for (let f = 0; f < numFrames; f++) {
+    let sum = 0;
+    const off = f * frameSize;
+    for (let i = 0; i < frameSize; i++) {
+      const s = pcm[off + i];
+      sum += s * s;
+    }
+    const rms = Math.sqrt(sum / frameSize);
+    energies[f] = rms > 0 ? 20 * Math.log10(rms) : -120;
+  }
+  const smooth = new Float32Array(numFrames);
+  for (let i = 0; i < numFrames; i++) {
+    let acc = 0, n = 0;
+    for (let j = Math.max(0, i - 1); j <= Math.min(numFrames - 1, i + 1); j++) { acc += energies[j]; n++; }
+    smooth[i] = acc / n;
+  }
+
+  const minVoicedFrames = 3;
+  const minSilenceFrames = 4;
+  const segments = [];
+  let inVoice = false, segStart = 0, silenceRun = 0, voiceRun = 0;
+  for (let i = 0; i < numFrames; i++) {
+    const voiced = smooth[i] >= silenceDb;
+    if (voiced) {
+      if (!inVoice) {
+        if (voiceRun === 0) segStart = i;
+        voiceRun++;
+        if (voiceRun >= minVoicedFrames) { inVoice = true; silenceRun = 0; }
+      } else { silenceRun = 0; }
+    } else {
+      voiceRun = 0;
+      if (inVoice) {
+        silenceRun++;
+        if (silenceRun >= minSilenceFrames) {
+          const segEnd = i - silenceRun + 1;
+          if (segEnd > segStart) segments.push({ start: segStart * frameMs / 1000, end: segEnd * frameMs / 1000 });
+          inVoice = false; silenceRun = 0;
+        }
+      }
+    }
+  }
+  if (inVoice) segments.push({ start: segStart * frameMs / 1000, end: numFrames * frameMs / 1000 });
+  log('Detected ' + segments.length + ' voice activity segments', 'ok');
+
+  const wordSegs = [];
+  for (let s = 0; s < segments.length; s++) {
+    const seg = segments[s];
+    const startF = Math.floor(seg.start * 1000 / frameMs);
+    const endF = Math.ceil(seg.end * 1000 / frameMs);
+    const splits = findLocalMinima(smooth, startF, endF);
+    let prev = startF;
+    for (let k = 0; k < splits.length; k++) {
+      wordSegs.push({ start: prev * frameMs / 1000, end: splits[k] * frameMs / 1000 });
+      prev = splits[k];
+    }
+    wordSegs.push({ start: prev * frameMs / 1000, end: endF * frameMs / 1000 });
+  }
+  log('Split into ' + wordSegs.length + ' candidate word segments', 'ok');
+
+  const scriptCase = tokenizeScriptKeepCase(state.scriptText);
+  if (scriptCase.length === 0) {
+    log('Cannot align: no script words.', 'err');
+    throw new Error('No script words available for alignment.');
+  }
+
+  const words = [];
+  if (Math.abs(scriptCase.length - wordSegs.length) / scriptCase.length < 0.15) {
+    const ratio = wordSegs.length / scriptCase.length;
+    for (let i = 0; i < scriptCase.length; i++) {
+      const segIdx = Math.min(wordSegs.length - 1, Math.floor(i * ratio));
+      const nextSegIdx = Math.min(wordSegs.length - 1, Math.floor((i + 1) * ratio));
+      const start = wordSegs[segIdx].start;
+      const end = wordSegs[Math.max(segIdx, nextSegIdx - 1)].end;
+      words.push({ text: scriptCase[i], start: start, end: Math.max(end, start + 0.1) });
+    }
+  } else {
+    log('Segment count (' + wordSegs.length + ') vs script words (' + scriptCase.length + ') mismatch — using proportional timing', 'warn');
+    const perWord = duration / scriptCase.length;
+    for (let i = 0; i < scriptCase.length; i++) {
+      words.push({ text: scriptCase[i], start: i * perWord, end: (i + 1) * perWord });
+    }
+  }
+  log('Aligned ' + words.length + ' script words to audio timeline', 'ok');
+  return { words: words, duration: duration, matchPct: null };
+}
+
+function findLocalMinima(arr, startF, endF) {
+  const out = [];
+  const window = 4;
+  for (let i = startF + window; i < endF - window; i++) {
+    let isMin = true;
+    const v = arr[i];
+    for (let j = i - window; j <= i + window; j++) {
+      if (j === i) continue;
+      if (arr[j] < v - 2) { isMin = false; break; }
+    }
+    if (isMin) {
+      let localMax = -Infinity;
+      for (let j = i - window; j <= i + window; j++) localMax = Math.max(localMax, arr[j]);
+      if (localMax - v >= 4) out.push(i);
+    }
+  }
+  const thinned = [];
+  for (let k = 0; k < out.length; k++) {
+    if (!thinned.length || out[k] - thinned[thinned.length - 1] >= 5) thinned.push(out[k]);
+  }
+  return thinned;
+}
+
+/* ═══════════════════════════════════════════════
+   RECONCILIATION
+═══════════════════════════════════════════════ */
+function reconcile(whisperWords, refWords, refWordsCase) {
+  if (!refWords.length) {
+    return {
+      words: whisperWords.map(function(w) { return { text: w.text, start: w.start, end: w.end }; }),
+      matchPct: null
+    };
+  }
+  let matches = 0;
+  const out = [];
+  let j = 0;
+  for (let i = 0; i < whisperWords.length; i++) {
+    const w = whisperWords[i];
+    const norm = w.text.toLowerCase().replace(/[^\w'-]/g, '');
+    let text = w.text;
+    if (j < refWords.length) {
+      const ref = refWords[j];
+      const refCase = refWordsCase[j];
+      if (wordsMatch(norm, ref)) {
+        text = refCase; matches++; j++;
+      } else {
+        const next = refWords[j + 1];
+        const nextCase = refWordsCase[j + 1];
+        const nn = refWords[j + 2];
+        const nnCase = refWordsCase[j + 2];
+        if (next && wordsMatch(norm, next)) { text = nextCase; j += 2; matches++; }
+        else if (nn && wordsMatch(norm, nn)) { text = nnCase; j += 3; matches++; }
+        else { j++; }
+      }
+    }
+    out.push({ text: text, start: w.start, end: w.end });
+  }
+  const pct = whisperWords.length ? Math.round((matches / whisperWords.length) * 100) : 0;
+  return { words: out, matchPct: pct };
+}
+
+function wordsMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const dA = a.replace(/[^\d]/g, '');
+  const dB = b.replace(/[^\d]/g, '');
+  if (dA && dB && dA === dB) return true;
+  if (a.length >= 4 && b.length >= 4 && Math.abs(a.length - b.length) <= 1) return lev1(a, b);
+  return false;
+}
+
+function lev1(a, b) {
+  if (a === b) return true;
+  let diffs = 0;
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1) return false;
+  let i = 0, j = 0;
+  while (i < la && j < lb) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    diffs++;
+    if (diffs > 1) return false;
+    if (la === lb) { i++; j++; } else if (la > lb) i++; else j++;
+  }
+  if (i < la || j < lb) diffs++;
+  return diffs <= 1;
+}
+
+/* ═══════════════════════════════════════════════
+   SRT FORMATTERS
+═══════════════════════════════════════════════ */
+function formatTimecode(sec) {
+  if (sec < 0) sec = 0;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.round((sec - Math.floor(sec)) * 1000);
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + ',' + String(ms).padStart(3, '0');
+}
+
+function buildWordSrt(words) {
+  let out = '';
+  words.forEach(function(w, i) {
+    out += (i + 1) + '\n' + formatTimecode(w.start) + ' --> ' + formatTimecode(w.end) + '\n' + w.text + '\n\n';
+  });
+  return out.trim() + '\n';
+}
+
+function buildPhraseSrt(words, maxWords, minDur) {
+  const chunks = [];
+  let buf = [];
+  function flush() {
+    if (!buf.length) return;
+    const start = buf[0].start;
+    let end = buf[buf.length - 1].end;
+    if (end - start < minDur) end = start + minDur;
+    chunks.push({
+      text: buf.map(function(w) { return w.text; }).join(' ').replace(/\s+([,.!?;:])/g, '$1'),
+      start: start,
+      end: end
+    });
+    buf = [];
+  }
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    buf.push(w);
+    const trailing = w.text.match(/[.!?,;:]$/);
+    if (buf.length >= maxWords) { flush(); continue; }
+    if (trailing && buf.length >= 3) flush();
+  }
+  flush();
+  for (let i = 0; i < chunks.length - 1; i++) {
+    if (chunks[i].end > chunks[i + 1].start) {
+      chunks[i].end = Math.max(chunks[i].start + 0.1, chunks[i + 1].start - 0.02);
+    }
+  }
+  let out = '';
+  chunks.forEach(function(c, i) {
+    out += (i + 1) + '\n' + formatTimecode(c.start) + ' --> ' + formatTimecode(c.end) + '\n' + c.text + '\n\n';
+  });
+  return { text: out.trim() + '\n', count: chunks.length };
+}
+
+function buildWordsJson(words, durationSec, mode) {
+  return JSON.stringify({
+    generator: 'MPD_SRT_Generator v3.0',
+    backend: mode === 'whisper' ? 'transformers_js_whisper_chunked' : 'web_audio_vad_alignment',
+    created: new Date().toISOString(),
+    duration_sec: durationSec,
+    word_count: words.length,
+    words: words.map(function(w) { return { text: w.text, start: +w.start.toFixed(3), end: +w.end.toFixed(3) }; })
+  }, null, 2);
+}
+
+/* ═══════════════════════════════════════════════
+   ABORT
+═══════════════════════════════════════════════ */
+window.abortRun = function() {
+  state.aborted = true;
+  log('Abort requested — finishing current chunk then stopping', 'warn');
+};
+
+/* ═══════════════════════════════════════════════
+   MAIN GENERATE FLOW
+═══════════════════════════════════════════════ */
+window.runGenerate = async function() {
+  const btn = $('btn-generate');
+  btn.disabled = true;
+  state.aborted = false;
+  $('step4').setAttribute('data-state', 'locked');
+  $('stats-grid').style.display = 'none';
+  $('outputs').innerHTML = '';
+  $('preview-tabs').style.display = 'none';
+  $('preview').style.display = 'none';
+  $('lt-words').innerHTML = '';
+  $('ls-progress').textContent = '—';
+  $('ls-elapsed').textContent = '—';
+  $('ls-eta').textContent = '—';
+
+  try {
+    let words, duration, matchPct = null;
+
+    if (state.mode === 'whisper') {
+      const maxWords = parseInt($('cfg-maxwords-w').value, 10) || 8;
+      const minDur = parseFloat($('cfg-mindur-w').value) || 1.0;
+      const res = await transcribeWithWhisper();
+      duration = res.duration;
+
+      if (state.scriptWords.length) {
+        log('Reconciling against ' + state.scriptWords.length + ' reference words…');
+        const scriptCase = tokenizeScriptKeepCase(state.scriptText);
+        const rec = reconcile(res.words, state.scriptWords, scriptCase);
+        words = rec.words;
+        matchPct = rec.matchPct;
+        if (matchPct >= 95) log('Script match: ' + matchPct + '% — excellent', 'ok');
+        else if (matchPct >= 85) log('Script match: ' + matchPct + '% — acceptable', 'warn');
+        else log('Script match: ' + matchPct + '% — check audio matches script version', 'warn');
+      } else {
+        words = res.words.map(function(w) { return { text: w.text, start: w.start, end: w.end }; });
+      }
+      buildAndRender(words, duration, matchPct, maxWords, minDur);
+    } else {
+      const maxWords = parseInt($('cfg-maxwords-a').value, 10) || 8;
+      const minDur = parseFloat($('cfg-mindur-a').value) || 1.0;
+      const res = await runAlignmentOnly();
+      buildAndRender(res.words, res.duration, res.matchPct, maxWords, minDur);
+    }
+  } catch (err) {
+    log('ERROR · ' + err.message, 'err');
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    progressDone();
+  }
+};
+
+function buildAndRender(words, duration, matchPct, maxWords, minDur) {
+  log('Building word-level SRT (' + words.length + ' cues)…');
+  const wordSrt = buildWordSrt(words);
+  log('Building phrase-level SRT (max ' + maxWords + ' words, min ' + minDur + 's)…');
+  const phraseResult = buildPhraseSrt(words, maxWords, minDur);
+  log('Building words.json…');
+  const wordsJson = buildWordsJson(words, duration, state.mode);
+
+  state.outputs = {
+    phraseSrt: phraseResult.text,
+    wordSrt: wordSrt,
+    wordsJson: wordsJson,
+    matchPct: matchPct,
+    wordCount: words.length,
+    phraseCount: phraseResult.count,
+    durationSec: duration
+  };
+
+  $('stat-words').textContent = words.length;
+  $('stat-phrases').textContent = phraseResult.count;
+  $('stat-duration').textContent = formatDuration(duration);
+  $('stat-match').textContent = matchPct !== null ? matchPct + '%' : 'n/a';
+  $('stats-grid').style.display = 'grid';
+
+  renderOutputs();
+  renderPreview('phrase');
+  $('preview-tabs').style.display = 'flex';
+  $('preview').style.display = 'block';
+  $('step4').setAttribute('data-state', 'done');
+  log('All artifacts ready. Download and rename per Section 04.', 'ok');
+}
+
+function formatDuration(sec) {
+  if (!sec) return '—';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+/* ═══════════════════════════════════════════════
+   OUTPUTS
+═══════════════════════════════════════════════ */
+function renderOutputs() {
+  const base = state.basename;
+  const items = [
+    { name: base + '_Captions_v1.srt', desc: 'Phrase-level · CapCut import · matches existing MPD style', data: state.outputs.phraseSrt, mime: 'application/x-subrip' },
+    { name: base + '_CaptionsWord_v1.srt', desc: 'Word-level · karaoke-style captions · one word per cue', data: state.outputs.wordSrt, mime: 'application/x-subrip' },
+    { name: base + '_Words_v1.json', desc: 'Structured timestamps · drives iconTimes[] in Video HTML', data: state.outputs.wordsJson, mime: 'application/json' }
+  ];
+  const host = $('outputs');
+  host.innerHTML = '';
+  items.forEach(function(it) {
+    const card = document.createElement('div');
+    card.className = 'output-card';
+    card.innerHTML =
+      '<div class="output-meta">' +
+      '<div class="o-name">' + escapeHtml(it.name) + '</div>' +
+      '<div class="o-desc">' + it.desc + '</div>' +
+      '<div class="o-stats">' + bytes(it.data.length) + '</div>' +
+      '</div>' +
+      '<button class="btn small">⬇ Download</button>';
+    card.querySelector('button').addEventListener('click', function() { downloadBlob(it.data, it.name, it.mime); });
+    host.appendChild(card);
+  });
+}
+
+function downloadBlob(data, name, mime) {
+  const blob = new Blob([data], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 500);
+  log('Downloaded ' + name, 'ok');
+}
+
+function renderPreview(which) {
+  if (!state.outputs) return;
+  document.querySelectorAll('.preview-tab').forEach(function(t) { t.classList.toggle('active', t.dataset.tab === which); });
+  const host = $('preview');
+  let content = '';
+  if (which === 'phrase') content = state.outputs.phraseSrt;
+  else if (which === 'word') content = state.outputs.wordSrt;
+  else content = state.outputs.wordsJson;
+  host.textContent = content.length > 8000 ? content.slice(0, 8000) + '\n\n…[truncated in preview — download for full file]' : content;
+}
+
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('preview-tab')) renderPreview(e.target.dataset.tab);
+});
+
+/* ═══════════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════════ */
+bindDropzone('dz-audio', 'file-audio', 'audio');
+bindDropzone('dz-script', 'file-script', 'script');
+updateButtonState();
+
+// Probe capabilities on page load to populate backend-status hint
+(async function probeInitialCaps() {
+  const el = $('backend-status');
+  if (!el) return;
+  try {
+    const caps = await detectBackend('auto');
+    let msg = '';
+    if (caps.webgpuAvailable) {
+      msg = '✓ WebGPU available (10–30× faster than WASM)';
+      el.style.color = 'var(--tealD)';
+    } else if (caps.protocol === 'file:') {
+      msg = '⚠ file:// — run server.py for WebGPU (10–30× faster)';
+      el.style.color = 'var(--amberD)';
+    } else {
+      msg = '⚠ WebGPU unavailable: ' + caps.webgpuReason;
+      el.style.color = 'var(--amberD)';
+    }
+    if (caps.crossOriginIsolated) {
+      msg += ' · WASM multi-threaded';
+    } else {
+      msg += ' · WASM single-thread only';
+    }
+    el.textContent = msg;
+  } catch (e) {
+    el.textContent = 'Capability check failed: ' + e.message;
+  }
+})();
+</script>
+
+</body>
+</html>
