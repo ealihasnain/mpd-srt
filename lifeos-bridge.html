@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MPD-SRT · LifeOS Bridge</title>
+<style>
+:root{--ink:#10233a;--muted:#637486;--blue:#2f75ad;--green:#2aa35a;--card:#f8fbff;--line:#d8e6f3;--danger:#b64242}*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:linear-gradient(180deg,#f7fbff,#edf5fb);color:var(--ink)}.wrap{max-width:980px;margin:0 auto;padding:18px}.card{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:22px;padding:16px;box-shadow:0 16px 36px rgba(38,75,111,.12)}.head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.title{font-size:18px;font-weight:950;color:#15496f}.sub{font-size:12px;font-weight:800;color:var(--muted);line-height:1.4;margin-top:3px}.pct{font-size:20px;font-weight:950;color:var(--blue)}.track{height:12px;border-radius:999px;background:#e6eef6;border:1px solid #d5e2ef;overflow:hidden;margin:14px 0}.fill{height:100%;width:0;background:linear-gradient(90deg,#2f75ad,#2fb05f);transition:width .25s ease}.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0}.step{border:1px solid #d6e3ef;background:#f4f8fc;color:#687888;border-radius:16px;padding:10px;text-align:center;font-size:13px;font-weight:950}.step.active{background:#e7f1ff;color:#27689c;border-color:#a8c9e6}.step.done{background:#e8f8ee;color:#21834c;border-color:#b8e2c8}.log{white-space:pre-wrap;font-size:13px;font-weight:850;color:#5d6d7e;line-height:1.48;min-height:88px;border:1px solid #dce8f4;background:#fbfdff;border-radius:16px;padding:12px;overflow-wrap:anywhere}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}button,label.file{border:1px solid #c5d8e9;background:linear-gradient(180deg,#fff,#eef6ff);border-radius:16px;color:#225d8e;font-weight:950;padding:11px 13px;font-size:13px}button.primary{background:linear-gradient(180deg,#2f7ab8,#286da6);color:white;border-color:#27689c}.stream{margin-top:12px;border:1px solid #dbe8f4;border-radius:16px;background:#fff;padding:12px;min-height:120px;white-space:pre-wrap;font-size:13px;line-height:1.5;color:#26384a;overflow-wrap:anywhere}.note{margin-top:10px;font-size:12px;font-weight:750;color:#607185;line-height:1.45}.hidden{display:none!important}input[type=file]{display:none}@media(max-width:560px){.wrap{padding:10px}.steps{grid-template-columns:repeat(2,1fr)}.card{border-radius:18px;padding:13px}.title{font-size:16px}}</style>
+</head>
+<body>
+<div class="wrap"><div class="card"><div class="head"><div><div class="title">LifeOS transcription bridge</div><div class="sub">Receives audio from LifeOS, transcribes through the MPD-SRT browser engine, and sends transcript back.</div></div><div class="pct" id="pct">0%</div></div><div class="track"><div class="fill" id="fill"></div></div><div class="steps"><div class="step active" data-step="ready">Ready</div><div class="step" data-step="model">Model</div><div class="step" data-step="speech">Speech</div><div class="step" data-step="return">Return</div></div><div class="log" id="log">Bridge loading. Keep this page open inside LifeOS.</div><div class="actions"><label class="file">Test with audio<input id="file" type="file" accept="audio/*,video/webm,video/mp4"></label><button class="primary" id="run" disabled>Transcribe test file</button><button id="abort">Abort</button></div><div class="stream" id="stream"></div><div class="note">First run downloads Whisper Tiny English and caches it in browser storage. This is still browser-side transcription, not a backend server. For best reliability open this page as a top-level page if embedded iframe restrictions appear.</div></div></div>
+<script type="module">
+let requestId = new URL(location.href).searchParams.get('rid') || '';
+let buffers = [], expectedChunks = 0, audioMeta = null, cancelled = false, transcriberPromise = null;
+const parentOrigin = '*';
+const el = id => document.getElementById(id);
+function setStep(step,pct,msg){
+  el('pct').textContent = Math.round(pct||0) + '%'; el('fill').style.width = Math.max(0,Math.min(100,pct||0)) + '%';
+  const order=['ready','model','speech','return'];
+  document.querySelectorAll('.step').forEach(x=>{const s=x.dataset.step; x.classList.toggle('active',s===step); x.classList.toggle('done',order.indexOf(s)<order.indexOf(step)||(pct>=100&&s===step));});
+  if(msg) el('log').textContent = msg;
+  try{ parent.postMessage({type:'lifeos-bridge-progress',requestId,step:step==='ready'?'prepare':step,pct,message:msg||''}, parentOrigin); }catch(_){ }
+}
+function fail(message){ setStep('ready',0,message); try{ parent.postMessage({type:'lifeos-bridge-error',requestId,message:String(message||'Transcription failed')}, parentOrigin); }catch(_){ } }
+function done(transcript, extra){ transcript = String(transcript||'').trim(); if(!transcript) return fail('Speech engine returned empty transcript. Try a clearer/shorter recording.'); el('stream').textContent = transcript; setStep('return',100,'Transcript complete. Returning to LifeOS.'); try{ parent.postMessage({type:'lifeos-bridge-result',requestId,transcript,text:transcript,result:extra||null}, parentOrigin); }catch(e){ fail('Could not return transcript to LifeOS: '+e.message); } }
+function textFromResult(v){
+  function clean(s){return String(s==null?'':s).replace(/\s+/g,' ').trim();}
+  if(typeof v === 'string') return clean(v);
+  if(!v || typeof v !== 'object') return '';
+  if(typeof v.text === 'string') return clean(v.text);
+  if(typeof v.transcript === 'string') return clean(v.transcript);
+  if(Array.isArray(v.chunks)) return clean(v.chunks.map(textFromResult).filter(Boolean).join(' '));
+  if(Array.isArray(v.segments)) return clean(v.segments.map(textFromResult).filter(Boolean).join(' '));
+  if(v.result) return textFromResult(v.result);
+  return '';
+}
+async function loadTranscriber(){
+  if(transcriberPromise) return transcriberPromise;
+  setStep('model',18,'Loading MPD-SRT browser speech engine. First run downloads the model.');
+  transcriberPromise = (async()=>{
+    const mod = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js');
+    const { pipeline, env } = mod;
+    try{ env.allowLocalModels = false; env.useBrowserCache = true; }catch(_){ }
+    try{ env.backends.onnx.wasm.numThreads = Math.max(1, Math.min(2, navigator.hardwareConcurrency || 1)); }catch(_){ }
+    return await pipeline('automatic-speech-recognition','Xenova/whisper-tiny.en',{ quantized:false, progress_callback: p => {
+      const label = p && (p.status || p.file || p.name) ? String(p.status || p.file || p.name) : 'Loading model';
+      const prog = p && typeof p.progress === 'number' ? Math.max(18, Math.min(50, Math.round(p.progress))) : 28;
+      setStep('model', prog, label);
+    }});
+  })();
+  return transcriberPromise;
+}
+async function transcribeBlob(blob){
+  cancelled = false;
+  const transcriber = await loadTranscriber();
+  if(cancelled) throw new Error('Cancelled');
+  setStep('speech',55,'Speech engine ready. Transcribing audio. This may take time on mobile.');
+  const url = URL.createObjectURL(blob);
+  try{
+    const result = await transcriber(url, { chunk_length_s: 30, stride_length_s: 5, return_timestamps: false });
+    const text = textFromResult(result);
+    done(text, result);
+  } finally { URL.revokeObjectURL(url); }
+}
+async function runReceivedAudio(){
+  if(!audioMeta || !buffers.length) return fail('No audio received from LifeOS.');
+  const blob = new Blob(buffers, {type: audioMeta.mime || 'audio/webm'});
+  el('stream').textContent = '';
+  setStep('model',15,'Audio received: '+(audioMeta.name||'LifeOS audio')+' · '+(blob.size/1048576).toFixed(2)+' MB');
+  await transcribeBlob(blob);
+}
+window.addEventListener('message', ev => {
+  const d = ev.data || {}; if(!d || typeof d.type !== 'string') return;
+  if(d.type === 'lifeos-audio-start'){
+    requestId = d.requestId || requestId || ''; buffers = new Array(d.chunks || 0); expectedChunks = d.chunks || 0; audioMeta = d; cancelled = false;
+    setStep('ready',8,'Receiving audio from LifeOS: '+(d.name||'recording'));
+  } else if(d.type === 'lifeos-audio-chunk'){
+    if(d.requestId && requestId && d.requestId !== requestId) return;
+    buffers[d.index] = d.buffer instanceof ArrayBuffer ? d.buffer : d.buffer && d.buffer.buffer ? d.buffer.buffer : d.buffer;
+    const got = buffers.filter(Boolean).length; setStep('ready',10 + Math.round(got/Math.max(1,expectedChunks)*20),'Received '+got+'/'+expectedChunks+' audio chunks.');
+    if(got === expectedChunks) runReceivedAudio().catch(e => fail(e && e.message ? e.message : e));
+  }
+});
+el('file').addEventListener('change', e => { const f=e.target.files&&e.target.files[0]; el('run').disabled=!f; audioMeta={name:f&&f.name,mime:f&&f.type}; buffers=f?[f]:[]; expectedChunks=f?1:0; setStep('ready',5,f?'Test file loaded: '+f.name:'No file selected'); });
+el('run').addEventListener('click', () => runReceivedAudio().catch(e => fail(e&&e.message?e.message:e)));
+el('abort').addEventListener('click', () => { cancelled=true; fail('Cancelled by user.'); });
+setStep('ready',0,'Bridge ready. Waiting for LifeOS audio.');
+try{ parent.postMessage({type:'lifeos-bridge-ready',requestId}, parentOrigin); }catch(_){ }
+</script>
+</body>
+</html>
