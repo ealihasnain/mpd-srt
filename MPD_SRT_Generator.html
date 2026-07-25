@@ -1563,6 +1563,10 @@ function mergeNumberFragments(words) {
       if (i + 1 < words.length && /^%[.,!?;:]?$/.test(String(words[i + 1].text).trim()) && cl.indexOf('%') < 0) {
         cl += '%'; end = words[i + 1].end; i++;
       }
+      // absorb a following spelled "percent" word ("15" + "percent" -> "15%")
+      if (i + 1 < words.length && /^percent[.,!?;:]?$/i.test(String(words[i + 1].text).trim()) && cl.indexOf('%') < 0) {
+        cl += '%'; end = words[i + 1].end; i++;
+      }
       // absorb a parenthetical plan suffix ("401" + "(k)" -> "401k"; drops the dup after "401k")
       if (i + 1 < words.length) {
         var pm = String(words[i + 1].text).trim().match(/^\(([A-Za-z])\)$/);
@@ -1731,7 +1735,7 @@ function buildPhraseSrt(words, maxWords, minDur) {
 
 function buildWordsJson(words, durationSec, mode) {
   return JSON.stringify({
-    generator: 'MPD_SRT_Generator v3.5',
+    generator: 'MPD_SRT_Generator v3.6',
     backend: mode === 'whisper' ? 'transformers_js_whisper_chunked' : 'web_audio_vad_alignment',
     created: new Date().toISOString(),
     duration_sec: durationSec,
