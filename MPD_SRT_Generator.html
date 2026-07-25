@@ -1479,7 +1479,7 @@ async function runAlignmentOnly() {
     }
   }
   log('Aligned ' + words.length + ' script words to audio timeline', 'ok');
-  return { words: sanitizeTiming(mergeNumberFragments(dedupeSeams(words))), duration: duration, matchPct: null };
+  return { words: finalizeWords(words), duration: duration, matchPct: null };
 }
 
 function findLocalMinima(arr, startF, endF) {
@@ -1508,24 +1508,37 @@ function findLocalMinima(arr, startF, endF) {
 /* ═══════════════════════════════════════════════
    RECONCILIATION
 ═══════════════════════════════════════════════ */
-/* Chunked Whisper repeats tokens at chunk seams (overlapping timestamps),
-   e.g. "$400" "$400" or "1" ",200." ",200". Drop a token that duplicates the
-   previous one and overlaps it in time - a seam artifact, not real speech. */
+/* Dedup-normalization: lowercase, drop wrapping punctuation, keep % and letters. */
+function dnorm(t) {
+  return String(t).toLowerCase().replace(/^[("'\[]+/, '').replace(/[.,!?;:"')\]]+$/, '').trim();
+}
+/* Chunked Whisper repeats tokens (and short phrases) at chunk seams with
+   overlapping timestamps: "average average", "10 % 10 %", "with me with me".
+   Drop a run of 1-3 tokens that duplicates the tail of the output and overlaps
+   it in time - a seam artifact, not real speech. */
 function dedupeSeams(words) {
   var out = [];
   for (var i = 0; i < words.length; i++) {
-    var w = words[i];
-    if (out.length) {
-      var p = out[out.length - 1];
-      var a = normForMatch(w.text), b = normForMatch(p.text);
-      if (a && a === b && w.start < p.end + 0.18) {   // exact repeat overlapping in time
-        p.end = Math.max(p.end, w.end);
-        continue;
+    var dropped = false;
+    var maxL = Math.min(3, out.length, words.length - i);
+    for (var L = maxL; L >= 1; L--) {
+      var match = true;
+      for (var k = 0; k < L; k++) {
+        var an = dnorm(words[i + k].text), bn = dnorm(out[out.length - L + k].text);
+        if (!an || an !== bn) { match = false; break; }
+      }
+      if (match && words[i].start < out[out.length - 1].end + 0.2) {
+        out[out.length - 1].end = Math.max(out[out.length - 1].end, words[i + L - 1].end);
+        i += L - 1; dropped = true; break;
       }
     }
-    out.push({ text: w.text, start: w.start, end: w.end });
+    if (!dropped) out.push({ text: words[i].text, start: words[i].start, end: words[i].end });
   }
   return out;
+}
+/* Single cleanup chain applied on EVERY path (reconciled, whisper-only, align). */
+function finalizeWords(words) {
+  return sanitizeTiming(mergeNumberFragments(dedupeSeams(words)));
 }
 function cleanNumberToken(t) {
   var s = String(t);
@@ -1569,7 +1582,7 @@ function sanitizeTiming(words) {
 function reconcile(whisperWords, refWords, refWordsCase) {
   if (!refWords.length) {
     return {
-      words: whisperWords.map(function(w) { return { text: w.text, start: w.start, end: w.end }; }),
+      words: finalizeWords(whisperWords.map(function(w) { return { text: w.text, start: w.start, end: w.end }; })),
       matchPct: null
     };
   }
@@ -1621,7 +1634,7 @@ function reconcile(whisperWords, refWords, refWordsCase) {
     i++;
   }
   const pct = whisperWords.length ? Math.round((matches / whisperWords.length) * 100) : 0;
-  return { words: sanitizeTiming(mergeNumberFragments(dedupeSeams(out))), matchPct: pct };
+  return { words: finalizeWords(out), matchPct: pct };
 }
 
 function wordsMatch(a, b) {
@@ -1709,7 +1722,7 @@ function buildPhraseSrt(words, maxWords, minDur) {
 
 function buildWordsJson(words, durationSec, mode) {
   return JSON.stringify({
-    generator: 'MPD_SRT_Generator v3.2',
+    generator: 'MPD_SRT_Generator v3.3',
     backend: mode === 'whisper' ? 'transformers_js_whisper_chunked' : 'web_audio_vad_alignment',
     created: new Date().toISOString(),
     duration_sec: durationSec,
@@ -1762,7 +1775,7 @@ window.runGenerate = async function() {
         else if (matchPct >= 85) log('Script match: ' + matchPct + '% — acceptable', 'warn');
         else log('Script match: ' + matchPct + '% — check audio matches script version', 'warn');
       } else {
-        words = res.words.map(function(w) { return { text: w.text, start: w.start, end: w.end }; });
+        words = finalizeWords(res.words.map(function(w) { return { text: w.text, start: w.start, end: w.end }; }));
       }
       buildAndRender(words, duration, matchPct, maxWords, minDur);
     } else {
