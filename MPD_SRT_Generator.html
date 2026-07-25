@@ -908,7 +908,7 @@ async function handleFile(file, kind) {
     state.scriptText = extractScript(text, file.name);
     state.scriptWords = tokenizeScript(state.scriptText);
     $('dz-script').classList.add('loaded');
-    $('dz-script-info').innerHTML = '<strong>' + escapeHtml(file.name) + '</strong><br>' + state.scriptWords.length + ' words extracted';
+    $('dz-script-info').innerHTML = '<strong>' + escapeHtml(file.name) + '</strong><br>' + state.scriptWords.length + ' words extracted (numbers counted whole)';
     $('dz-script-clear').style.display = 'block';
     $('script-peek').style.display = 'block';
     $('script-peek-body').textContent = state.scriptText.slice(0, 4000) + (state.scriptText.length > 4000 ? '\n\n…[truncated in preview]' : '');
@@ -931,6 +931,18 @@ function escapeHtml(s) {
 /* ═══════════════════════════════════════════════
    SCRIPT EXTRACTION — strip ElevenLabs tags
 ═══════════════════════════════════════════════ */
+function extractPartsArray(raw) {
+  var m = raw.match(/const\s+PARTS\s*=\s*(\[[\s\S]*?\]);/);
+  if (!m) return '';
+  try {
+    var arr = Function('return ' + m[1])();
+    if (!Array.isArray(arr)) return '';
+    var txt = arr.map(function(p) { return typeof p === 'string' ? p : (p && p.text ? String(p.text) : ''); })
+                 .filter(Boolean).join('\n\n');
+    return txt.length > 200 ? txt : '';
+  } catch (e) { return ''; }
+}
+
 function extractScript(raw, filename) {
   const isHtml = /\.html?$/i.test(filename) || /<html|<body|<div/i.test(raw);
   let text = raw;
@@ -942,7 +954,11 @@ function extractScript(raw, filename) {
     if (candidates.length) {
       text = candidates.map(function(el) { return el.textContent; }).join('\n\n');
     } else {
-      text = doc.body ? doc.body.textContent : doc.documentElement.textContent;
+      // Fallback: some voiceover HTML holds the script in a JS array
+      // (const PARTS = [{text:"..."}]) that never renders without JS.
+      // Recover those parts rather than falling back to page chrome.
+      var partsText = extractPartsArray(raw);
+      text = partsText || (doc.body ? doc.body.textContent : doc.documentElement.textContent);
     }
   }
   text = text.replace(/\[[^\[\]\n]{1,60}\]/g, ' ');
@@ -953,16 +969,115 @@ function extractScript(raw, filename) {
   return text;
 }
 
+/* ── Number-aware tokenizing (v2) ──────────────────────────────
+   Both tokenizers derive from ONE splitter so refWords[j] and
+   refWordsCase[j] always describe the SAME token. Commas and
+   decimal points inside digit runs are preserved, so "600,000"
+   is one word (thousands separator), not "600" + "000".        */
+function normForMatch(w) {
+  var s = String(w).toLowerCase();
+  s = s.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"');
+  s = s.replace(/(\d),(?=\d)/g, '$1\u0001');   // protect thousands separator
+  s = s.replace(/(\d)\.(?=\d)/g, '$1\u0002');  // protect decimal point
+  s = s.replace(/[^\w'\-\u0001\u0002]/g, '');
+  s = s.replace(/\u0001/g, ',').replace(/\u0002/g, '.');
+  return s;
+}
+function tokenizePairs(text) {
+  var raw = String(text).split(/\s+/);
+  var pairs = [];
+  for (var i = 0; i < raw.length; i++) {
+    var t = raw[i];
+    if (!t) continue;
+    var norm = normForMatch(t);
+    if (!norm) continue;                       // drop pure punctuation from BOTH
+    var disp = t.replace(/^[^\w$(\[]+/, '').replace(/[^\w%)\].,!?'"]+$/, '');
+    pairs.push([norm, disp || t]);
+  }
+  return pairs;
+}
 function tokenizeScriptKeepCase(text) {
-  return text.split(/\s+/).filter(function(w) { return w.length > 0; });
+  return tokenizePairs(text).map(function(p) { return p[1]; });
+}
+function tokenizeScript(text) {
+  return tokenizePairs(text).map(function(p) { return p[0]; });
 }
 
-function tokenizeScript(text) {
-  return text
-    .toLowerCase()
-    .replace(/[^\w\s'-]/g, ' ')
-    .split(/\s+/)
-    .filter(function(w) { return w.length > 0; });
+/* ── Spoken-form expansion of numbers ──────────────────────────
+   TTS speaks "600,000" as "six hundred thousand" and "1926" as
+   "nineteen twenty six". Reconciliation compares against Whisper
+   output, so numeric tokens need candidate spoken expansions.   */
+var NUM_ONES = ['zero','one','two','three','four','five','six','seven','eight','nine','ten',
+  'eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen'];
+var NUM_TENS = ['','','twenty','thirty','forty','fifty','sixty','seventy','eighty','ninety'];
+function chunkWords(x) {
+  var r = [];
+  if (x >= 100) { r.push(NUM_ONES[Math.floor(x / 100)], 'hundred'); x %= 100; }
+  if (x >= 20) { r.push(NUM_TENS[Math.floor(x / 10)]); x %= 10; if (x) r.push(NUM_ONES[x]); }
+  else if (x > 0) r.push(NUM_ONES[x]);
+  return r;
+}
+function intToWords(n) {
+  if (n === 0) return ['zero'];
+  var out = [], scales = [[1e9, 'billion'], [1e6, 'million'], [1e3, 'thousand']], rem = n;
+  for (var i = 0; i < scales.length; i++) {
+    var v = scales[i][0];
+    if (rem >= v) { out = out.concat(chunkWords(Math.floor(rem / v)), [scales[i][1]]); rem %= v; }
+  }
+  if (rem > 0) out = out.concat(chunkWords(rem));
+  return out;
+}
+function isNumericToken(tok) { return /\d/.test(String(tok)); }
+/* Returns candidate spoken word-arrays for a numeric token. */
+function numExpansions(tok) {
+  var raw = String(tok).replace(/[^\d.,%]/g, '');
+  var core = raw.replace(/,/g, '').replace(/%$/, '');
+  if (!core || !/^\d+(\.\d+)?$/.test(core)) return [];
+  var cands = [];
+  if (core.indexOf('.') >= 0) {                       // decimals: 4.5 -> four point five
+    var parts = core.split('.');
+    var head = intToWords(parseInt(parts[0], 10));
+    var frac = parts[1].split('').map(function(d) { return NUM_ONES[parseInt(d, 10)]; });
+    cands.push(head.concat(['point'], frac));
+  } else {
+    var n = parseInt(core, 10);
+    cands.push(intToWords(n));
+    if (core.length === 4 && n >= 1100 && n <= 2099) { // years: 1926 -> nineteen twenty six
+      var hi = parseInt(core.slice(0, 2), 10), lo = parseInt(core.slice(2), 10);
+      var yr = intToWords(hi);
+      if (lo === 0) yr = yr.concat(['hundred']);
+      else if (lo < 10) yr = yr.concat(['oh', NUM_ONES[lo]]);
+      else yr = yr.concat(chunkWords(lo));
+      cands.push(yr);
+      cands.push(intToWords(hi).concat(['hundred'], lo ? chunkWords(lo) : []));
+    }
+    if (core.length === 3) {                           // 401 -> four oh one
+      var d = core.split('').map(function(x) { return parseInt(x, 10); });
+      if (d[1] === 0) cands.push([NUM_ONES[d[0]], 'oh', NUM_ONES[d[2]]]);
+      cands.push(d.map(function(x) { return NUM_ONES[x]; }));
+    }
+  }
+  if (/%$/.test(String(tok))) {                        // trailing % is spoken "percent"
+    for (var k = 0; k < cands.length; k++) cands[k] = cands[k].concat(['percent']);
+  }
+  return cands;
+}
+/* Try to consume N whisper words that voice a numeric ref token.
+   Returns how many whisper words were consumed, or 0. */
+function matchNumberRun(refTok, whisperWords, startIdx) {
+  var cands = numExpansions(refTok);
+  for (var c = 0; c < cands.length; c++) {
+    var cand = cands[c], ci = 0, idx = startIdx, guard = 0;
+    while (ci < cand.length && idx < whisperWords.length && guard++ < 40) {
+      var wn = normForMatch(whisperWords[idx].text);
+      if (!wn) { idx++; continue; }
+      if (wn === 'and' && cand[ci] !== 'and') { idx++; continue; }   // "one hundred AND five"
+      if (wn === cand[ci] || wordsMatch(wn, cand[ci])) { ci++; idx++; }
+      else break;
+    }
+    if (ci === cand.length && idx > startIdx) return idx - startIdx;
+  }
+  return 0;
 }
 
 /* ═══════════════════════════════════════════════
@@ -1377,11 +1492,29 @@ function reconcile(whisperWords, refWords, refWordsCase) {
   let matches = 0;
   const out = [];
   let j = 0;
-  for (let i = 0; i < whisperWords.length; i++) {
+  let i = 0;
+  while (i < whisperWords.length) {
     const w = whisperWords[i];
-    const norm = w.text.toLowerCase().replace(/[^\w'-]/g, '');
+    const norm = normForMatch(w.text);
     let text = w.text;
+
     if (j < refWords.length) {
+      // (a) Numeric reference token spoken as several words:
+      //     "600,000" <- "six hundred thousand". Emit ONE caption token
+      //     spanning the whole spoken run, keeping the digit form.
+      let consumed = 0;
+      if (isNumericToken(refWordsCase[j])) consumed = matchNumberRun(refWordsCase[j], whisperWords, i);
+      if (!consumed && isNumericToken(refWordsCase[j + 1] || '') && !wordsMatch(norm, refWords[j])) {
+        const skip = matchNumberRun(refWordsCase[j + 1], whisperWords, i);
+        if (skip) { j++; consumed = skip; }
+      }
+      if (consumed > 0) {
+        out.push({ text: refWordsCase[j], start: w.start, end: whisperWords[i + consumed - 1].end });
+        matches += consumed; i += consumed; j++;
+        continue;
+      }
+
+      // (b) Ordinary single-token match, with 1-2 token lookahead.
       const ref = refWords[j];
       const refCase = refWordsCase[j];
       if (wordsMatch(norm, ref)) {
@@ -1397,6 +1530,7 @@ function reconcile(whisperWords, refWords, refWordsCase) {
       }
     }
     out.push({ text: text, start: w.start, end: w.end });
+    i++;
   }
   const pct = whisperWords.length ? Math.round((matches / whisperWords.length) * 100) : 0;
   return { words: out, matchPct: pct };
@@ -1405,6 +1539,8 @@ function reconcile(whisperWords, refWords, refWordsCase) {
 function wordsMatch(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
+  // Numbers compare on digits only, so "600,000" === "600000" but a bare
+  // fragment like "000" never equals the full "600,000".
   const dA = a.replace(/[^\d]/g, '');
   const dB = b.replace(/[^\d]/g, '');
   if (dA && dB && dA === dB) return true;
