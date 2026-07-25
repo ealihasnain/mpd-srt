@@ -602,15 +602,15 @@ body[data-mode="align"] .mode-align-only { display: block; }
   <!-- whisper config -->
   <div class="mode-whisper-only">
     <div class="step-title">Model and chunking</div>
-    <div class="step-desc">Bigger models are more accurate but slower and larger to download. For MPD scripts (English, studio-grade voice), <strong>Whisper Base English</strong> is the recommended default.</div>
+    <div class="step-desc">Bigger models are more accurate but slower and larger to download. Defaults here are tuned for <strong>maximum accuracy</strong> (Small English, fp32, 30s chunks) at the cost of speed. Drop to Base English if the first-run download or transcription time is a problem.</div>
 
     <div class="config-row">
       <div class="field">
         <label class="field-label">Whisper model</label>
         <select id="cfg-model">
           <option value="Xenova/whisper-tiny.en">Tiny English · ~40 MB · fastest</option>
-          <option value="Xenova/whisper-base.en" selected>Base English · ~145 MB · recommended</option>
-          <option value="Xenova/whisper-small.en">Small English · ~480 MB · max accuracy</option>
+          <option value="Xenova/whisper-base.en">Base English · ~145 MB · faster</option>
+          <option value="Xenova/whisper-small.en" selected>Small English · ~480 MB · max accuracy · default</option>
         </select>
         <div class="field-hint">Cached after first download.</div>
       </div>
@@ -639,18 +639,18 @@ body[data-mode="align"] .mode-align-only { display: block; }
       <div class="field">
         <label class="field-label">Precision (lower = faster)</label>
         <select id="cfg-dtype">
-          <option value="auto" selected>Auto (q8 on WASM, fp32 on WebGPU)</option>
-          <option value="fp32">fp32 · max accuracy · slowest</option>
+          <option value="auto">Auto (q8 on WASM, fp32 on WebGPU)</option>
+          <option value="fp32" selected>fp32 · max accuracy · slowest · default</option>
           <option value="fp16">fp16 · balanced · WebGPU only</option>
           <option value="q8">q8 · 8-bit · ~2× faster WASM</option>
           <option value="q4">q4 · 4-bit · ~3× faster WASM · ~2% acc drop</option>
         </select>
-        <div class="field-hint">Quantization barely affects script-reconciled output.</div>
+        <div class="field-hint">fp32 = highest accuracy. On WebGPU it is fast; on CPU/WASM it is slow.</div>
       </div>
       <div class="field">
         <label class="field-label">Chunk size (sec)</label>
-        <input type="number" id="cfg-chunksec" value="20" min="10" max="30" step="1">
-        <div class="field-hint">Larger = fewer chunks, more popup risk.</div>
+        <input type="number" id="cfg-chunksec" value="30" min="10" max="30" step="1">
+        <div class="field-hint">30 = Whisper's native window, fewest seams. Lower only if the tab runs out of memory.</div>
       </div>
     </div>
   </div>
@@ -1563,6 +1563,15 @@ function mergeNumberFragments(words) {
       if (i + 1 < words.length && /^%[.,!?;:]?$/.test(String(words[i + 1].text).trim()) && cl.indexOf('%') < 0) {
         cl += '%'; end = words[i + 1].end; i++;
       }
+      // absorb a parenthetical plan suffix ("401" + "(k)" -> "401k"; drops the dup after "401k")
+      if (i + 1 < words.length) {
+        var pm = String(words[i + 1].text).trim().match(/^\(([A-Za-z])\)$/);
+        if (pm) {
+          var lt = pm[1].toLowerCase();
+          if (cl.slice(-1).toLowerCase() !== lt) cl += lt;
+          end = words[i + 1].end; i++;
+        }
+      }
       out.push({ text: cl || w.text, start: start, end: end });
     } else out.push(w);
   }
@@ -1722,7 +1731,7 @@ function buildPhraseSrt(words, maxWords, minDur) {
 
 function buildWordsJson(words, durationSec, mode) {
   return JSON.stringify({
-    generator: 'MPD_SRT_Generator v3.3',
+    generator: 'MPD_SRT_Generator v3.5',
     backend: mode === 'whisper' ? 'transformers_js_whisper_chunked' : 'web_audio_vad_alignment',
     created: new Date().toISOString(),
     duration_sec: durationSec,
