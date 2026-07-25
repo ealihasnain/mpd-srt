@@ -1479,7 +1479,7 @@ async function runAlignmentOnly() {
     }
   }
   log('Aligned ' + words.length + ' script words to audio timeline', 'ok');
-  return { words: sanitizeTiming(mergeNumberFragments(words)), duration: duration, matchPct: null };
+  return { words: sanitizeTiming(mergeNumberFragments(dedupeSeams(words))), duration: duration, matchPct: null };
 }
 
 function findLocalMinima(arr, startF, endF) {
@@ -1508,6 +1508,25 @@ function findLocalMinima(arr, startF, endF) {
 /* ═══════════════════════════════════════════════
    RECONCILIATION
 ═══════════════════════════════════════════════ */
+/* Chunked Whisper repeats tokens at chunk seams (overlapping timestamps),
+   e.g. "$400" "$400" or "1" ",200." ",200". Drop a token that duplicates the
+   previous one and overlaps it in time - a seam artifact, not real speech. */
+function dedupeSeams(words) {
+  var out = [];
+  for (var i = 0; i < words.length; i++) {
+    var w = words[i];
+    if (out.length) {
+      var p = out[out.length - 1];
+      var a = normForMatch(w.text), b = normForMatch(p.text);
+      if (a && a === b && w.start < p.end + 0.18) {   // exact repeat overlapping in time
+        p.end = Math.max(p.end, w.end);
+        continue;
+      }
+    }
+    out.push({ text: w.text, start: w.start, end: w.end });
+  }
+  return out;
+}
 function cleanNumberToken(t) {
   var s = String(t);
   s = s.replace(/^[^\w$]+/, '').replace(/^\$/, '');   // drop leading quotes/brackets and $
@@ -1602,7 +1621,7 @@ function reconcile(whisperWords, refWords, refWordsCase) {
     i++;
   }
   const pct = whisperWords.length ? Math.round((matches / whisperWords.length) * 100) : 0;
-  return { words: sanitizeTiming(mergeNumberFragments(out)), matchPct: pct };
+  return { words: sanitizeTiming(mergeNumberFragments(dedupeSeams(out))), matchPct: pct };
 }
 
 function wordsMatch(a, b) {
@@ -1690,7 +1709,7 @@ function buildPhraseSrt(words, maxWords, minDur) {
 
 function buildWordsJson(words, durationSec, mode) {
   return JSON.stringify({
-    generator: 'MPD_SRT_Generator v3.1',
+    generator: 'MPD_SRT_Generator v3.2',
     backend: mode === 'whisper' ? 'transformers_js_whisper_chunked' : 'web_audio_vad_alignment',
     created: new Date().toISOString(),
     duration_sec: durationSec,
